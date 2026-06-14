@@ -1,0 +1,189 @@
+[package]
+name = "calendar"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = "0.4"
+// calendar.java - Календарь с событиями на Java Swing (с Jackson JSON)
+import javax.swing.*;
+import javax.swing.table.*;
+import java.awt.*;
+import java.awt.event.*;
+import java.time.*;
+import java.time.format.*;
+import java.util.*;
+import java.util.List;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.type.TypeReference;
+import java.io.*;
+
+public class CalendarApp extends JFrame {
+    private JTable calendarTable;
+    private DefaultTableModel tableModel;
+    private JLabel monthLabel;
+    private JTextArea eventsArea;
+    private Map<String, List<Event>> events;
+    private LocalDate currentDate;
+    private ObjectMapper mapper = new ObjectMapper();
+    private final String DATA_FILE = "events.json";
+
+    static class Event {
+        public String time;
+        public String title;
+        public String desc;
+        public Event() {}
+        public Event(String time, String title, String desc) {
+            this.time = time; this.title = title; this.desc = desc;
+        }
+    }
+
+    public CalendarApp() {
+        setTitle("Календарь событий");
+        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        setSize(900, 600);
+        setLocationRelativeTo(null);
+        loadEvents();
+        currentDate = LocalDate.now();
+        initUI();
+    }
+
+    private void loadEvents() {
+        File f = new File(DATA_FILE);
+        if (f.exists()) {
+            try {
+                events = mapper.readValue(f, new TypeReference<Map<String, List<Event>>>() {});
+            } catch (IOException e) { events = new HashMap<>(); }
+        } else { events = new HashMap<>(); }
+    }
+
+    private void saveEvents() {
+        try { mapper.writeValue(new File(DATA_FILE), events); } catch (IOException e) { e.printStackTrace(); }
+    }
+
+    private void initUI() {
+        setLayout(new BorderLayout(10,10));
+        // Панель навигации
+        JPanel navPanel = new JPanel();
+        JButton prevBtn = new JButton("<");
+        JButton nextBtn = new JButton(">");
+        JButton todayBtn = new JButton("Сегодня");
+        monthLabel = new JLabel();
+        navPanel.add(prevBtn);
+        navPanel.add(monthLabel);
+        navPanel.add(nextBtn);
+        navPanel.add(todayBtn);
+        add(navPanel, BorderLayout.NORTH);
+        // Календарь
+        tableModel = new DefaultTableModel(6,7) {
+            public boolean isCellEditable(int row, int col) { return false; }
+        };
+        calendarTable = new JTable(tableModel);
+        calendarTable.setRowHeight(60);
+        calendarTable.setFont(new Font("Arial", Font.PLAIN, 12));
+        calendarTable.addMouseListener(new MouseAdapter() {
+            public void mouseClicked(MouseEvent e) {
+                int row = calendarTable.getSelectedRow();
+                int col = calendarTable.getSelectedColumn();
+                Object val = tableModel.getValueAt(row, col);
+                if (val instanceof Integer) {
+                    int day = (Integer) val;
+                    showEventsForDate(LocalDate.of(currentDate.getYear(), currentDate.getMonth(), day));
+                }
+            }
+        });
+        JScrollPane scroll = new JScrollPane(calendarTable);
+        add(scroll, BorderLayout.CENTER);
+        // Список событий
+        eventsArea = new JTextArea();
+        eventsArea.setEditable(false);
+        JPanel rightPanel = new JPanel(new BorderLayout());
+        rightPanel.add(new JLabel("События:"), BorderLayout.NORTH);
+        rightPanel.add(new JScrollPane(eventsArea), BorderLayout.CENTER);
+        JButton addBtn = new JButton("Добавить событие");
+        addBtn.addActionListener(e -> addEvent());
+        rightPanel.add(addBtn, BorderLayout.SOUTH);
+        add(rightPanel, BorderLayout.EAST);
+        // Обработчики
+        prevBtn.addActionListener(e -> { currentDate = currentDate.minusMonths(1); refreshCalendar(); });
+        nextBtn.addActionListener(e -> { currentDate = currentDate.plusMonths(1); refreshCalendar(); });
+        todayBtn.addActionListener(e -> { currentDate = LocalDate.now(); refreshCalendar(); });
+        refreshCalendar();
+    }
+
+    private void refreshCalendar() {
+        monthLabel.setText(currentDate.format(DateTimeFormatter.ofPattern("MMMM yyyy")));
+        YearMonth ym = YearMonth.of(currentDate.getYear(), currentDate.getMonth());
+        int firstDayOfWeek = ym.atDay(1).getDayOfWeek().getValue(); // 1=пн, 7=вс
+        int daysInMonth = ym.lengthOfMonth();
+        int row = 0, col = firstDayOfWeek - 1;
+        for (int i=1; i<=daysInMonth; i++) {
+            tableModel.setValueAt(i, row, col);
+            col++;
+            if (col == 7) { col=0; row++; }
+        }
+        // Очистка остальных ячеек
+        for (int i=row; i<6; i++) for (int j=0; j<7; j++) tableModel.setValueAt(null, i, j);
+        // Индикаторы событий
+        for (int i=1; i<=daysInMonth; i++) {
+            String dateStr = LocalDate.of(currentDate.getYear(), currentDate.getMonth(), i).toString();
+            if (events.containsKey(dateStr) && !events.get(dateStr).isEmpty()) {
+                // добавим точку в ячейку
+                for (int r=0; r<6; r++) for (int c=0; c<7; c++) {
+                    Object v = tableModel.getValueAt(r,c);
+                    if (v instanceof Integer && (Integer)v == i) {
+                        tableModel.setValueAt(i + " 📌", r, c);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    private void showEventsForDate(LocalDate date) {
+        String dateStr = date.toString();
+        StringBuilder sb = new StringBuilder();
+        List<Event> evs = events.getOrDefault(dateStr, new ArrayList<>());
+        for (Event e : evs) {
+            sb.append(e.time).append(" ").append(e.title).append("\n").append(e.desc).append("\n\n");
+        }
+        if (sb.length() == 0) sb.append("Нет событий");
+        eventsArea.setText(sb.toString());
+    }
+
+    private void addEvent() {
+        LocalDate selected = null;
+        int row = calendarTable.getSelectedRow();
+        int col = calendarTable.getSelectedColumn();
+        if (row >=0 && col>=0 && tableModel.getValueAt(row, col) instanceof Integer) {
+            int day = (Integer) tableModel.getValueAt(row, col);
+            selected = LocalDate.of(currentDate.getYear(), currentDate.getMonth(), day);
+        } else {
+            selected = currentDate;
+        }
+        String dateStr = selected.toString();
+        JTextField timeField = new JTextField();
+        JTextField titleField = new JTextField();
+        JTextArea descArea = new JTextArea(3,20);
+        JPanel panel = new JPanel(new GridLayout(0,1));
+        panel.add(new JLabel("Время (ЧЧ:ММ):")); panel.add(timeField);
+        panel.add(new JLabel("Название:")); panel.add(titleField);
+        panel.add(new JLabel("Описание:")); panel.add(new JScrollPane(descArea));
+        int result = JOptionPane.showConfirmDialog(this, panel, "Добавить событие", JOptionPane.OK_CANCEL_OPTION);
+        if (result == JOptionPane.OK_OPTION) {
+            String title = titleField.getText().trim();
+            if (title.isEmpty()) { JOptionPane.showMessageDialog(this, "Название обязательно"); return; }
+            Event ev = new Event(timeField.getText(), title, descArea.getText());
+            events.computeIfAbsent(dateStr, k -> new ArrayList<>()).add(ev);
+            saveEvents();
+            refreshCalendar();
+            showEventsForDate(selected);
+        }
+    }
+
+    public static void main(String[] args) {
+        SwingUtilities.invokeLater(() -> new CalendarApp().setVisible(true));
+    }
+}
